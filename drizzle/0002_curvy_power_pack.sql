@@ -1,0 +1,1 @@
+ALTER TABLE "credit_events" ADD COLUMN "customer_ghana_card_photo_url" text;

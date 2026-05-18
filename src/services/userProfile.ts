@@ -1,0 +1,63 @@
+import { eq } from 'drizzle-orm';
+import { db } from '../db/client.js';
+import { customerProfiles, merchantProfiles, userRoles, users } from '../db/schema.js';
+
+export type UserProfileResponse = {
+  userId: string;
+  phoneNumber: string;
+  displayName: string | null;
+  roles: ('merchant' | 'customer')[];
+  activeRole: 'merchant' | 'customer' | null;
+  createdAt: string;
+  merchantProfile?: Awaited<ReturnType<typeof getMerchantProfile>>;
+  customerProfile?: Awaited<ReturnType<typeof getCustomerProfile>>;
+};
+
+export async function getUserProfile(userId: string): Promise<UserProfileResponse | null> {
+  const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  if (!user) return null;
+
+  const roles = await db.select({ role: userRoles.role }).from(userRoles).where(eq(userRoles.userId, userId));
+  const roleList = roles.map((r) => r.role);
+
+  const merchantProfile = roleList.includes('merchant') ? await getMerchantProfile(userId) : undefined;
+  const customerProfile = roleList.includes('customer') ? await getCustomerProfile(userId) : undefined;
+
+  return {
+    userId: user.id,
+    phoneNumber: user.phoneNumber,
+    displayName: user.displayName,
+    roles: roleList,
+    activeRole: user.activeRole,
+    createdAt: user.createdAt.toISOString(),
+    merchantProfile,
+    customerProfile,
+  };
+}
+
+export async function getMerchantProfile(userId: string) {
+  const [p] = await db.select().from(merchantProfiles).where(eq(merchantProfiles.userId, userId)).limit(1);
+  if (!p) return null;
+  return {
+    businessName: p.businessName,
+    businessType: p.businessType,
+    ownerName: p.ownerName,
+    location: p.location,
+    kycVerified: p.kycVerified,
+    settlementType: p.settlementType,
+    settlementDetails: p.settlementDetails,
+    settlementVerified: p.settlementVerified,
+    kycSubmitted: !!p.kycSubmittedAt,
+    activated: p.activated,
+  };
+}
+
+export async function getCustomerProfile(userId: string) {
+  const [p] = await db.select().from(customerProfiles).where(eq(customerProfiles.userId, userId)).limit(1);
+  if (!p) return null;
+  return {
+    fullName: p.fullName,
+    trustScore: p.trustScore,
+    trustRating: p.trustRating,
+  };
+}
