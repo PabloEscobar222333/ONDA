@@ -1,19 +1,22 @@
 import { env } from '../lib/env.js';
 import { logger } from '../lib/logger.js';
 
+/**
+ * Outbound SMS for reminders, deep-link onboarding, dispute alerts.
+ *
+ * Not used for authentication — sign-in is handled by Firebase Auth via
+ * Google / Apple / Email-Password (see middleware/auth.ts). This function
+ * is intentionally a no-op when SMS_PROVIDER='none' (current default). Hubtel
+ * and Arkesel paths are kept wired so flipping the env var lights them up
+ * without code changes.
+ */
 export async function sendSms(to: string, body: string): Promise<void> {
-  if (env.OTP_DEV_LOG_ONLY || env.SMS_PROVIDER === 'none') {
-    logger.info({ to, body }, '[SMS dev log]');
+  if (env.SMS_PROVIDER === 'none') {
+    logger.info({ to, body }, '[SMS dev log] provider=none — message not sent');
     return;
   }
-  if (env.SMS_PROVIDER === 'hubtel') {
-    await sendHubtel(to, body);
-    return;
-  }
-  if (env.SMS_PROVIDER === 'arkesel') {
-    await sendArkesel(to, body);
-    return;
-  }
+  if (env.SMS_PROVIDER === 'hubtel') return sendHubtel(to, body);
+  if (env.SMS_PROVIDER === 'arkesel') return sendArkesel(to, body);
 }
 
 async function sendHubtel(to: string, body: string): Promise<void> {

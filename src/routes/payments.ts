@@ -16,6 +16,26 @@ import { logger } from '../lib/logger.js';
 export const paymentRoutes = new Hono();
 paymentRoutes.use('*', requireAuth);
 
+/**
+ * POST /payments/initiate
+ *
+ * Paystack gateway initiation — currently deferred behind PAYSTACK_ENABLED on
+ * the client. The route is kept so the FE flow doesn't 404 if the flag flips
+ * to true; the response shape matches what the customer.ts service expects.
+ * Replace the body with a real Paystack init call when re-enabling payments.
+ */
+const initiateSchema = z.object({
+  creditEventId: z.string().min(1),
+  amount: z.number().positive(),
+});
+paymentRoutes.post('/initiate', zValidator('json', initiateSchema), async (c) => {
+  return fail(
+    c,
+    503,
+    'Online payments are temporarily unavailable. Please use manual payment for now.'
+  );
+});
+
 const manualSchema = z.object({
   creditEventId: z.string().min(1),
   amount: z.number().positive(),

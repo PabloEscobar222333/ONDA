@@ -263,8 +263,8 @@ merchantRoutes.post('/onboarding/kyc', zValidator('json', kycSchema), async (c) 
   const { ghanaCardNumber, selfieBase64 } = c.req.valid('json');
   const { buffer, mime } = decodeBase64(selfieBase64);
   const ext = mime.includes('png') ? 'png' : 'jpg';
-  const key = `kyc/${merchantId}/${newId('sf')}.${ext}`;
-  const url = await putObject(env.R2_BUCKET_IMAGES, key, buffer, mime);
+  const key = `${merchantId}/${newId('sf')}.${ext}`;
+  const url = await putObject(env.SUPABASE_BUCKET_KYC, key, buffer, mime);
   await db
     .update(merchantProfiles)
     .set({
@@ -286,3 +286,78 @@ merchantRoutes.post('/onboarding/activate', async (c) => {
     .where(eq(merchantProfiles.userId, merchantId));
   return ok(c, { success: true });
 });
+
+/**
+ * POST /merchant/create-subaccount
+ *
+ * Paystack subaccount provisioning. Payments are deferred behind
+ * PAYSTACK_ENABLED on the client, so this is a no-op success that lets the
+ * Activation screen complete cleanly. When Paystack is re-introduced, replace
+ * the body with a real Paystack API call.
+ */
+const createSubaccountSchema = z.object({
+  businessName: z.string().min(1),
+  businessType: z.string().optional(),
+  location: z.string().optional(),
+  settlementType: z.enum(['momo', 'bank']),
+  settlementDetails: z.record(z.unknown()),
+});
+merchantRoutes.post(
+  '/create-subaccount',
+  zValidator('json', createSubaccountSchema),
+  async (c) => {
+    // Intentionally a no-op until Paystack is wired back in. We acknowledge so
+    // the onboarding Activation screen treats setup as successful.
+    return ok(c, { success: true, deferred: true });
+  }
+);
+
+/**
+ * PATCH /merchant/profile
+ *
+ * Lets an already-onboarded merchant edit business info from the settings
+ * screen. Only the four user-editable fields are accepted — KYC / activation
+ * flags are mutated by their own routes.
+ */
+const profilePatchSchema = z.object({
+  businessName: z.string().min(1).optional(),
+  businessType: z.string().optional(),
+  ownerName: z.string().min(1).optional(),
+  location: z.string().optional(),
+});
+merchantRoutes.patch('/profile', zValidator('json', profilePatchSchema), async (c) => {
+  const merchantId = c.get('userId');
+  const data = c.req.valid('json');
+  if (Object.keys(data).length === 0) return ok(c, { success: true });
+
+  await db
+    .update(merchantProfiles)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(merchantProfiles.userId, merchantId));
+
+  // Keep the user's display name in sync with the owner name on the profile.
+  if (data.ownerName) {
+    await db
+      .update(users)
+      .set({ displayName: data.ownerName, updatedAt: new Date() })
+      .where(eq(users.id, merchantId));
+  }
+  return ok(c, { success: true });
+});
+
+/**
+ * PATCH /merchant/settlement/default
+ *
+ * The current schema stores a single settlement_details JSON blob, not a list
+ * of saved accounts — so "set default" is effectively a no-op for now. The
+ * route is wired so the Settings screen doesn't break; we accept the accountId
+ * and acknowledge. Multi-account support is a future schema migration.
+ */
+const setDefaultSettlementSchema = z.object({ accountId: z.string().min(1) });
+merchantRoutes.patch(
+  '/settlement/default',
+  zValidator('json', setDefaultSettlementSchema),
+  async (c) => {
+    return ok(c, { success: true, deferred: true });
+  }
+);

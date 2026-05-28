@@ -1,47 +1,63 @@
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { env } from '../lib/env.js';
 import { logger } from '../lib/logger.js';
 
-let _client: S3Client | null = null;
-function client(): S3Client {
+let _client: SupabaseClient | null = null;
+function client(): SupabaseClient {
   if (_client) return _client;
-  if (!env.R2_ACCOUNT_ID || !env.R2_ACCESS_KEY_ID || !env.R2_SECRET_ACCESS_KEY) {
-    throw new Error('R2 credentials not configured');
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error(
+      'Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in the environment.'
+    );
   }
-  _client = new S3Client({
-    region: 'auto',
-    endpoint: `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-    credentials: {
-      accessKeyId: env.R2_ACCESS_KEY_ID,
-      secretAccessKey: env.R2_SECRET_ACCESS_KEY,
-    },
+  _client = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
   });
   return _client;
 }
 
+/**
+ * Uploads an object to a Supabase Storage bucket and returns a short-lived
+ * signed URL the client can render. We deliberately do not persist the signed
+ * URL — only the object path lives in Postgres, and a fresh URL is minted on
+ * read.
+ */
 export async function putObject(
   bucket: string,
   key: string,
   body: Buffer,
   contentType: string
 ): Promise<string> {
-  if (!env.R2_ACCESS_KEY_ID) {
-    logger.warn({ bucket, key }, '[Storage stub] R2 not configured, skipping upload');
-    return `stub://r2/${bucket}/${key}`;
+  const { error: uploadErr } = await client()
+    .storage.from(bucket)
+    .upload(key, body, { contentType, upsert: true });
+  if (uploadErr) {
+    logger.error({ bucket, key, err: uploadErr }, 'Supabase Storage upload failed');
+    throw uploadErr;
   }
-  await client().send(
-    new PutObjectCommand({
-      Bucket: bucket,
-      Key: key,
-      Body: body,
-      ContentType: contentType,
-    })
-  );
-  if (env.R2_PUBLIC_BASE_URL) return `${env.R2_PUBLIC_BASE_URL}/${key}`;
-  return await getSignedUrl(client(), new PutObjectCommand({ Bucket: bucket, Key: key }), {
-    expiresIn: 3600,
-  });
+
+  const { data, error: signErr } = await client()
+    .storage.from(bucket)
+    .createSignedUrl(key, env.SUPABASE_SIGNED_URL_TTL_SECONDS);
+  if (signErr || !data?.signedUrl) {
+    logger.error({ bucket, key, err: signErr }, 'Supabase Storage sign failed');
+    throw signErr ?? new Error('Failed to create signed URL');
+  }
+  return data.signedUrl;
+}
+
+/**
+ * Mints a fresh signed URL for an already-uploaded object. Use this on the
+ * read path where the DB stores only the bucket key.
+ */
+export async function getSignedUrl(bucket: string, key: string): Promise<string> {
+  const { data, error } = await client()
+    .storage.from(bucket)
+    .createSignedUrl(key, env.SUPABASE_SIGNED_URL_TTL_SECONDS);
+  if (error || !data?.signedUrl) {
+    throw error ?? new Error('Failed to create signed URL');
+  }
+  return data.signedUrl;
 }
 
 export function decodeBase64(data: string): { buffer: Buffer; mime: string } {

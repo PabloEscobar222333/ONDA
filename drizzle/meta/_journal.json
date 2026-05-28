@@ -36,6 +36,20 @@
       "when": 1778593929028,
       "tag": "0004_lean_wendell_vaughn",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1779984000000,
+      "tag": "0005_drop_auth_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1779984000001,
+      "tag": "0006_multi_provider_auth",
+      "breakpoints": true
     }
   ]
 }

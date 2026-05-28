@@ -4,7 +4,11 @@ import { customerProfiles, merchantProfiles, userRoles, users } from '../db/sche
 
 export type UserProfileResponse = {
   userId: string;
-  phoneNumber: string;
+  email: string | null;
+  fullName: string | null;
+  photoUrl: string | null;
+  providers: string[];
+  phoneNumber: string | null;
   displayName: string | null;
   roles: ('merchant' | 'customer')[];
   activeRole: 'merchant' | 'customer' | null;
@@ -25,6 +29,10 @@ export async function getUserProfile(userId: string): Promise<UserProfileRespons
 
   return {
     userId: user.id,
+    email: user.email,
+    fullName: user.fullName,
+    photoUrl: user.photoUrl,
+    providers: user.providers,
     phoneNumber: user.phoneNumber,
     displayName: user.displayName,
     roles: roleList,

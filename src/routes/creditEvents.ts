@@ -89,8 +89,8 @@ creditEventRoutes.post('/', zValidator('json', createSchema), async (c) => {
   if (data.customerGhanaCardPhotoBase64) {
     const { buffer, mime } = decodeBase64(data.customerGhanaCardPhotoBase64);
     const ext = mime.includes('png') ? 'png' : 'jpg';
-    const key = `credit-events/${id}/ghana-card.${ext}`;
-    ghanaCardPhotoUrl = await putObject(env.R2_BUCKET_IMAGES, key, buffer, mime);
+    const key = `${id}/ghana-card.${ext}`;
+    ghanaCardPhotoUrl = await putObject(env.SUPABASE_BUCKET_CREDIT_EVENTS, key, buffer, mime);
   }
 
   const [created] = await db

@@ -4,7 +4,7 @@ import { and, eq, lt, sql } from 'drizzle-orm';
 import { env } from '../lib/env.js';
 import { logger } from '../lib/logger.js';
 import { db } from '../db/client.js';
-import { creditEvents, payments, phoneOtps } from '../db/schema.js';
+import { payments } from '../db/schema.js';
 import { snapshotMonthly } from '../services/trustScore.js';
 
 let boss: PgBoss | null = null;
@@ -12,7 +12,6 @@ let boss: PgBoss | null = null;
 const QUEUE = {
   expireCashWindow: 'expire-cash-window',
   monthlyTrust: 'monthly-trust-snapshot',
-  otpCleanup: 'otp-cleanup',
   markOverdue: 'mark-overdue',
 } as const;
 
@@ -20,6 +19,11 @@ export async function startJobs(): Promise<void> {
   boss = new PgBoss({ connectionString: env.DATABASE_URL });
   boss.on('error', (err) => logger.error({ err }, 'pg-boss error'));
   await boss.start();
+
+  // pg-boss v10 requires queues to be created before work() / schedule().
+  for (const name of Object.values(QUEUE)) {
+    await boss.createQueue(name);
+  }
 
   await boss.work(QUEUE.expireCashWindow, async () => {
     const now = new Date();
@@ -36,12 +40,6 @@ export async function startJobs(): Promise<void> {
     logger.info('Monthly trust score snapshot complete');
   });
 
-  await boss.work(QUEUE.otpCleanup, async () => {
-    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const r = await db.execute(sql`delete from ${phoneOtps} where created_at < ${cutoff}`);
-    logger.info({ rows: r.rowCount }, 'Cleaned old OTPs');
-  });
-
   await boss.work(QUEUE.markOverdue, async () => {
     const now = new Date();
     // Mark active events overdue when any schedule item is past due and unpaid.
@@ -56,7 +54,6 @@ export async function startJobs(): Promise<void> {
   });
 
   await boss.schedule(QUEUE.expireCashWindow, '*/15 * * * *');
-  await boss.schedule(QUEUE.otpCleanup, '17 3 * * *');
   await boss.schedule(QUEUE.markOverdue, '0 * * * *');
   await boss.schedule(QUEUE.monthlyTrust, '0 1 1 * *');
 

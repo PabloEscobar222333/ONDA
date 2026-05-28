@@ -43,6 +43,6 @@ export async function buildTransactionPdf(
 
   await new Promise<void>((resolve) => doc.on('end', () => resolve()));
   const buffer = Buffer.concat(buffers);
-  const key = `reports/${newId('rpt')}.pdf`;
-  return await putObject(env.R2_BUCKET_PDFS, key, buffer, 'application/pdf');
+  const key = `${newId('rpt')}.pdf`;
+  return await putObject(env.SUPABASE_BUCKET_REPORTS, key, buffer, 'application/pdf');
 }

@@ -8,7 +8,7 @@ Payment-rail integration (Paystack) is intentionally deferred — every payment 
 
 ```bash
 cp .env.example .env
-# edit DATABASE_URL and JWT_SECRET (openssl rand -base64 48)
+# edit DATABASE_URL, FIREBASE_PROJECT_ID, FIREBASE_SERVICE_ACCOUNT_JSON
 
 npm install
 npm run db:generate
@@ -18,7 +18,7 @@ npm run dev
 
 The server listens on `http://localhost:8080/v1`. Health check at `GET /v1/health`.
 
-In dev, OTP codes are logged to stdout (`OTP_DEV_LOG_ONLY=true`). No SMS provider needed to test the auth loop.
+Authentication is owned by Firebase Auth (Google / Apple / Email-Password). The backend verifies the client's Firebase ID token via Firebase Admin and identifies the user by Firebase UID. `FIREBASE_PROJECT_ID` and `FIREBASE_SERVICE_ACCOUNT_JSON` are required for the server to boot.
 
 ## Wiring up the Expo app
 
@@ -26,19 +26,16 @@ In `onda-app/`, set:
 
 ```
 EXPO_PUBLIC_API_BASE_URL=http://<your-lan-ip>:8080/v1
-EXPO_PUBLIC_USE_MOCK_AUTH=false
+EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=<from Firebase Console → Authentication → Google → Web SDK config>
 ```
-
-(The frontend's mock-auth branch short-circuits when `EXPO_PUBLIC_USE_MOCK_AUTH=true` *or* the base URL is missing — see `src/services/auth.ts`.)
 
 ## Endpoint surface
 
 All responses use the envelope `{ success: boolean, data?, message? }`.
 
 ### Auth
-- `POST /v1/auth/request-otp` `{ phoneNumber }` → `{ message, expiresIn }`
-- `POST /v1/auth/verify-otp` `{ phoneNumber, code }` → `{ token, refreshToken, user, isNewUser }`
-- `POST /v1/auth/refresh` `{ refreshToken }` → `{ token, refreshToken }`
+- `POST /v1/auth/sync` — called by the client immediately after any Firebase sign-in. Verifies the ID token, upserts a `users` row keyed by Firebase UID, refreshes provider metadata, returns `{ user, isNewUser, needsRoleSelection }`.
+- All other endpoints require a `Bearer <Firebase ID token>` header.
 
 ### Users (auth required)
 - `GET /v1/users/me`
@@ -87,7 +84,6 @@ All responses use the envelope `{ success: boolean, data?, message? }`.
 | Cron | Job |
 |---|---|
 | `*/15 * * * *` | Expire pending payments past their 48h window |
-| `17 3 * * *` | Delete consumed/old OTP rows |
 | `0 * * * *` | Mark active events overdue (heuristic — refine when schedule logic ships) |
 | `0 1 1 * *` | Snapshot every customer's trust score for the month |
 
@@ -99,8 +95,8 @@ Jobs and the API run in the same process; pg-boss stores queue state in Postgres
 fly launch --no-deploy        # answer "no" to creating a Postgres now if you want a separate one
 fly postgres create --region jnb --name onda-pg --vm-size shared-cpu-1x --volume-size 1
 fly postgres attach --app onda-api onda-pg
-fly secrets set JWT_SECRET="$(openssl rand -base64 48)"
-fly secrets set HUBTEL_CLIENT_ID=… HUBTEL_CLIENT_SECRET=… SMS_PROVIDER=hubtel OTP_DEV_LOG_ONLY=false
+fly secrets set FIREBASE_PROJECT_ID=onda-XXXX FIREBASE_SERVICE_ACCOUNT_JSON="$(cat path/to/service-account.json)"
+fly secrets set HUBTEL_CLIENT_ID=… HUBTEL_CLIENT_SECRET=… SMS_PROVIDER=hubtel
 fly secrets set R2_ACCOUNT_ID=… R2_ACCESS_KEY_ID=… R2_SECRET_ACCESS_KEY=… R2_PUBLIC_BASE_URL=…
 fly deploy
 ```

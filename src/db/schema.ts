@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   pgTable,
   text,
@@ -60,8 +61,16 @@ export const trustRatingEnum = pgEnum('trust_rating', ['Building', 'Fair', 'Good
 export const users = pgTable(
   'users',
   {
+    // The primary key IS the Firebase UID. All providers (Google, Apple, Email/Password)
+    // for one user share a single Firebase account via account linking, so one UID
+    // identifies one human across all sign-in methods. Phone is no longer the auth key
+    // but is kept as an optional contact field for merchant credit-event lookups.
     id: text('id').primaryKey(),
-    phoneNumber: text('phone_number').notNull(),
+    email: text('email'),
+    fullName: text('full_name'),
+    photoUrl: text('photo_url'),
+    providers: text('providers').array().notNull().default(sql`'{}'::text[]`),
+    phoneNumber: text('phone_number'),
     displayName: text('display_name'),
     activeRole: roleEnum('active_role'),
     fcmToken: text('fcm_token'),
@@ -73,6 +82,7 @@ export const users = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
+    emailIdx: index('users_email_idx').on(t.email),
     phoneIdx: uniqueIndex('users_phone_idx').on(t.phoneNumber),
   })
 );
@@ -120,38 +130,6 @@ export const customerProfiles = pgTable('customer_profiles', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
-
-export const refreshTokens = pgTable(
-  'refresh_tokens',
-  {
-    id: text('id').primaryKey(),
-    userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-    tokenHash: text('token_hash').notNull(),
-    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    revokedAt: timestamp('revoked_at', { withTimezone: true }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => ({
-    userIdx: index('refresh_tokens_user_idx').on(t.userId),
-    tokenIdx: uniqueIndex('refresh_tokens_token_idx').on(t.tokenHash),
-  })
-);
-
-export const phoneOtps = pgTable(
-  'phone_otps',
-  {
-    id: text('id').primaryKey(),
-    phoneNumber: text('phone_number').notNull(),
-    codeHash: text('code_hash').notNull(),
-    attempts: integer('attempts').notNull().default(0),
-    consumedAt: timestamp('consumed_at', { withTimezone: true }),
-    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => ({
-    phoneIdx: index('phone_otps_phone_idx').on(t.phoneNumber),
-  })
-);
 
 export const creditEvents = pgTable(
   'credit_events',

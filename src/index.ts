@@ -16,6 +16,7 @@ import { paymentRoutes } from './routes/payments.js';
 import { customerRoutes } from './routes/customer.js';
 import { trustRoutes } from './routes/trust.js';
 import { disputeRoutes } from './routes/disputes.js';
+import { notificationRoutes } from './routes/notifications.js';
 
 import { startJobs } from './jobs/index.js';
 
@@ -34,6 +35,7 @@ app.route('/payments', paymentRoutes);
 app.route('/customer', customerRoutes);
 app.route('/customer/trust-score', trustRoutes);
 app.route('/disputes', disputeRoutes);
+app.route('/notifications', notificationRoutes);
 
 app.onError(onError);
 app.notFound(onNotFound);

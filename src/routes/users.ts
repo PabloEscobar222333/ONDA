@@ -1,11 +1,12 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, not, sql } from 'drizzle-orm';
 
 import { db } from '../db/client.js';
 import { customerProfiles, userRoles, users } from '../db/schema.js';
 import { fail, ok } from '../lib/response.js';
+import { logger } from '../lib/logger.js';
 import { normalizeGhanaPhone } from '../lib/phone.js';
 import { requireAuth } from '../middleware/auth.js';
 import { getUserProfile } from '../services/userProfile.js';
@@ -61,6 +62,118 @@ userRoutes.patch('/profile', zValidator('json', profileSchema), async (c) => {
 
   await db.update(users).set({ displayName: fullName, updatedAt: new Date() }).where(eq(users.id, userId));
   return ok(c, { fullName });
+});
+
+/**
+ * PATCH /users/phone
+ *
+ * Customer attaches their phone number to their Firebase-authed account.
+ * If a "stub" user row already exists with this phone — created by a merchant
+ * when they added the customer to a credit event before the customer signed
+ * up — every row that referenced the stub is repointed to the caller and the
+ * stub is deleted. From the customer's perspective, any credit events that
+ * were waiting for them now appear in their app.
+ *
+ * A "stub" is identified as any users row sharing this phone whose providers
+ * array is empty (created server-side, never went through /auth/sync). If a
+ * row with this phone exists and has at least one provider, that's a real
+ * other account and the request is rejected with 409.
+ */
+const phoneSchema = z.object({ phoneNumber: z.string().min(9) });
+
+userRoutes.patch('/phone', zValidator('json', phoneSchema), async (c) => {
+  const userId = c.get('userId');
+  const { phoneNumber } = c.req.valid('json');
+  const normalized = normalizeGhanaPhone(phoneNumber);
+  if (!normalized) return fail(c, 422, 'Invalid Ghana phone number');
+
+  const [other] = await db
+    .select()
+    .from(users)
+    .where(and(eq(users.phoneNumber, normalized), not(eq(users.id, userId))))
+    .limit(1);
+
+  if (!other) {
+    await db
+      .update(users)
+      .set({ phoneNumber: normalized, updatedAt: new Date() })
+      .where(eq(users.id, userId));
+    return ok(c, { merged: false, claimedEventCount: 0 });
+  }
+
+  if (other.providers.length > 0) {
+    return fail(c, 409, 'That phone number is already linked to another ONDA account.');
+  }
+
+  // Stub merge — repoint every FK that targets users.id, then delete the stub.
+  // Conflicts on composite/PK columns (userRoles, customerProfiles,
+  // merchantProfiles, trustScoreHistory.period) are pre-resolved by deleting
+  // the stub-side row when the caller already has the corresponding entry.
+  const stubId = other.id;
+  let claimedEventCount = 0;
+
+  await db.transaction(async (tx) => {
+    // userRoles (composite PK on userId + role)
+    await tx.execute(sql`
+      INSERT INTO user_roles ("user_id", "role")
+        SELECT ${userId}, "role" FROM user_roles WHERE "user_id" = ${stubId}
+      ON CONFLICT ("user_id", "role") DO NOTHING
+    `);
+    await tx.execute(sql`DELETE FROM user_roles WHERE "user_id" = ${stubId}`);
+
+    // customerProfiles (PK on userId): keep caller's if present, else move stub's
+    await tx.execute(sql`
+      DELETE FROM customer_profiles
+      WHERE "user_id" = ${stubId}
+        AND EXISTS (SELECT 1 FROM customer_profiles WHERE "user_id" = ${userId})
+    `);
+    await tx.execute(sql`UPDATE customer_profiles SET "user_id" = ${userId} WHERE "user_id" = ${stubId}`);
+
+    // merchantProfiles: same pattern (rare for a stub but safe)
+    await tx.execute(sql`
+      DELETE FROM merchant_profiles
+      WHERE "user_id" = ${stubId}
+        AND EXISTS (SELECT 1 FROM merchant_profiles WHERE "user_id" = ${userId})
+    `);
+    await tx.execute(sql`UPDATE merchant_profiles SET "user_id" = ${userId} WHERE "user_id" = ${stubId}`);
+
+    // creditEvents — both sides could reference the stub
+    const countRes = await tx.execute(sql`
+      SELECT count(*)::int AS n FROM credit_events
+      WHERE "customer_id" = ${stubId} OR "merchant_id" = ${stubId}
+    `);
+    claimedEventCount = Number((countRes.rows?.[0] as { n?: number } | undefined)?.n ?? 0);
+
+    await tx.execute(sql`UPDATE credit_events SET "customer_id" = ${userId} WHERE "customer_id" = ${stubId}`);
+    await tx.execute(sql`UPDATE credit_events SET "merchant_id" = ${userId} WHERE "merchant_id" = ${stubId}`);
+
+    // disputes
+    await tx.execute(sql`UPDATE disputes SET "raised_by_user_id" = ${userId} WHERE "raised_by_user_id" = ${stubId}`);
+
+    // notifications
+    await tx.execute(sql`UPDATE notifications SET "user_id" = ${userId} WHERE "user_id" = ${stubId}`);
+
+    // reminderLog
+    await tx.execute(sql`UPDATE reminder_log SET "sent_by_user_id" = ${userId} WHERE "sent_by_user_id" = ${stubId}`);
+
+    // trustScoreHistory (unique on userId + period)
+    await tx.execute(sql`
+      DELETE FROM trust_score_history
+      WHERE "user_id" = ${stubId}
+        AND "period" IN (SELECT "period" FROM trust_score_history WHERE "user_id" = ${userId})
+    `);
+    await tx.execute(sql`UPDATE trust_score_history SET "user_id" = ${userId} WHERE "user_id" = ${stubId}`);
+
+    // Finally: stamp the phone on the real user, then delete the stub.
+    await tx
+      .update(users)
+      .set({ phoneNumber: normalized, updatedAt: new Date() })
+      .where(eq(users.id, userId));
+    await tx.execute(sql`DELETE FROM users WHERE "id" = ${stubId}`);
+  });
+
+  logger.info({ userId, stubId, claimedEventCount }, 'Merged stub user on phone claim');
+  return ok(c, { merged: true, claimedEventCount });
 });
 
 const lookupSchema = z.object({ phone: z.string().min(9) });
