@@ -306,8 +306,15 @@ merchantRoutes.post(
   '/create-subaccount',
   zValidator('json', createSubaccountSchema),
   async (c) => {
-    // Intentionally a no-op until Paystack is wired back in. We acknowledge so
-    // the onboarding Activation screen treats setup as successful.
+    const merchantId = c.get('userId');
+    // Paystack subaccount provisioning stays deferred, but this is the terminal
+    // onboarding call the Activation screen makes — so mark the merchant
+    // activated here. Without it, `activated` never flips true and credit-event
+    // creation fails with "Merchant not activated".
+    await db
+      .update(merchantProfiles)
+      .set({ activated: true, activatedAt: new Date(), updatedAt: new Date() })
+      .where(eq(merchantProfiles.userId, merchantId));
     return ok(c, { success: true, deferred: true });
   }
 );
