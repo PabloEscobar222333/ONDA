@@ -66,7 +66,7 @@ authRoutes.post('/sync', async (c) => {
         email: email ?? existing.email,
         fullName: fullName ?? existing.fullName,
         photoUrl: photoUrl ?? existing.photoUrl,
-        providers: sql`array(select distinct unnest(${users.providers} || ${[provider]}::text[]))`,
+        providers: sql`array(select distinct unnest(${users.providers} || ARRAY[${provider}]::text[]))`,
         updatedAt: new Date(),
       })
       .where(eq(users.id, uid));
