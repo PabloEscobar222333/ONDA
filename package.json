@@ -30,12 +30,14 @@
     "pino": "^9.5.0",
     "pino-pretty": "^11.3.0",
     "ulid": "^2.3.0",
+    "ws": "^8.21.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
     "@types/pdfkit": "^0.13.5",
     "@types/pg": "^8.11.10",
+    "@types/ws": "^8.18.1",
     "drizzle-kit": "^0.28.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"

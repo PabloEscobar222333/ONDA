@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import WebSocket from 'ws';
 import { env } from '../lib/env.js';
 import { logger } from '../lib/logger.js';
 
@@ -12,6 +13,11 @@ function client(): SupabaseClient {
   }
   _client = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
+    // We only use Storage + Postgres here, never Realtime — but supabase-js
+    // eagerly constructs a RealtimeClient inside createClient(), which throws
+    // on Node < 22 ("Node.js 20 detected without native WebSocket support").
+    // Supplying the `ws` transport keeps client creation from blowing up.
+    realtime: { transport: WebSocket as unknown as never },
   });
   return _client;
 }
