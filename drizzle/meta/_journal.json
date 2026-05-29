@@ -50,6 +50,13 @@
       "when": 1779984000001,
       "tag": "0006_multi_provider_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1780041072150,
+      "tag": "0007_merchant_profile_photo",
+      "breakpoints": true
     }
   ]
 }

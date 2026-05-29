@@ -107,7 +107,12 @@ export const merchantProfiles = pgTable('merchant_profiles', {
   businessType: text('business_type'),
   ownerName: text('owner_name').notNull(),
   location: text('location'),
+  region: text('region'),
+  digitalAddress: text('digital_address'),
   kycVerified: boolean('kyc_verified').notNull().default(false),
+  // Storage object KEY for the merchant's profile photo (not a URL — a fresh
+  // signed URL is minted on read). Lives in the KYC bucket under profiles/.
+  profilePhotoKey: text('profile_photo_key'),
   settlementType: settlementTypeEnum('settlement_type'),
   settlementDetails: jsonb('settlement_details').$type<Record<string, unknown>>(),
   settlementVerified: boolean('settlement_verified').notNull().default(false),

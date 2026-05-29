@@ -1,6 +1,8 @@
 import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { customerProfiles, merchantProfiles, userRoles, users } from '../db/schema.js';
+import { env } from '../lib/env.js';
+import { getSignedUrl } from './storage.js';
 
 export type UserProfileResponse = {
   userId: string;
@@ -46,11 +48,27 @@ export async function getUserProfile(userId: string): Promise<UserProfileRespons
 export async function getMerchantProfile(userId: string) {
   const [p] = await db.select().from(merchantProfiles).where(eq(merchantProfiles.userId, userId)).limit(1);
   if (!p) return null;
+
+  // Mint a fresh signed URL for the profile photo on every read — we store only
+  // the object key, never an expiring URL. Best-effort: a stale/missing object
+  // shouldn't break the whole profile fetch.
+  let photoUrl: string | null = null;
+  if (p.profilePhotoKey) {
+    try {
+      photoUrl = await getSignedUrl(env.SUPABASE_BUCKET_KYC, p.profilePhotoKey);
+    } catch {
+      photoUrl = null;
+    }
+  }
+
   return {
     businessName: p.businessName,
     businessType: p.businessType,
     ownerName: p.ownerName,
     location: p.location,
+    region: p.region,
+    digitalAddress: p.digitalAddress,
+    photoUrl,
     kycVerified: p.kycVerified,
     settlementType: p.settlementType,
     settlementDetails: p.settlementDetails,

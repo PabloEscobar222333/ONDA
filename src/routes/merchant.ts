@@ -17,7 +17,7 @@ import { fail, ok } from '../lib/response.js';
 import { normalizeGhanaPhone } from '../lib/phone.js';
 import { requireAuth } from '../middleware/auth.js';
 import { buildTransactionPdf } from '../services/pdf.js';
-import { decodeBase64, putObject } from '../services/storage.js';
+import { decodeBase64, getSignedUrl, putObject } from '../services/storage.js';
 import { newId } from '../lib/id.js';
 
 export const merchantRoutes = new Hono();
@@ -329,27 +329,79 @@ merchantRoutes.post(
 const profilePatchSchema = z.object({
   businessName: z.string().min(1).optional(),
   businessType: z.string().optional(),
+  // The app sends `ownerFullName`; accept `ownerName` too for compatibility.
   ownerName: z.string().min(1).optional(),
+  ownerFullName: z.string().min(1).optional(),
   location: z.string().optional(),
+  region: z.string().optional(),
+  digitalAddress: z.string().optional(),
 });
 merchantRoutes.patch('/profile', zValidator('json', profilePatchSchema), async (c) => {
   const merchantId = c.get('userId');
   const data = c.req.valid('json');
-  if (Object.keys(data).length === 0) return ok(c, { success: true });
+
+  const ownerName = data.ownerName ?? data.ownerFullName;
+  const set: Record<string, unknown> = {};
+  if (data.businessName !== undefined) set.businessName = data.businessName;
+  if (data.businessType !== undefined) set.businessType = data.businessType;
+  if (ownerName !== undefined) set.ownerName = ownerName;
+  if (data.location !== undefined) set.location = data.location;
+  if (data.region !== undefined) set.region = data.region;
+  if (data.digitalAddress !== undefined) set.digitalAddress = data.digitalAddress;
+
+  if (Object.keys(set).length === 0) return ok(c, { success: true });
 
   await db
     .update(merchantProfiles)
-    .set({ ...data, updatedAt: new Date() })
+    .set({ ...set, updatedAt: new Date() })
     .where(eq(merchantProfiles.userId, merchantId));
 
   // Keep the user's display name in sync with the owner name on the profile.
-  if (data.ownerName) {
+  if (ownerName) {
     await db
       .update(users)
-      .set({ displayName: data.ownerName, updatedAt: new Date() })
+      .set({ displayName: ownerName, updatedAt: new Date() })
       .where(eq(users.id, merchantId));
   }
   return ok(c, { success: true });
+});
+
+/**
+ * PATCH /merchant/profile/photo
+ *
+ * Upload or remove the merchant's profile photo. The FE sends a base64 data
+ * URL (or null to remove). We store only the object key in Postgres and return
+ * a fresh signed URL the app can render immediately.
+ */
+const photoPatchSchema = z.object({
+  photoBase64: z.string().min(20).nullable().optional(),
+});
+merchantRoutes.patch('/profile/photo', zValidator('json', photoPatchSchema), async (c) => {
+  const merchantId = c.get('userId');
+  const { photoBase64 } = c.req.valid('json');
+
+  // Remove: clear the key. (We leave the stored object; it's overwritten on the
+  // next upload via upsert, and signed URLs to it are no longer minted.)
+  if (!photoBase64) {
+    await db
+      .update(merchantProfiles)
+      .set({ profilePhotoKey: null, updatedAt: new Date() })
+      .where(eq(merchantProfiles.userId, merchantId));
+    return ok(c, { success: true, photoUrl: null });
+  }
+
+  const { buffer, mime } = decodeBase64(photoBase64);
+  const ext = mime.includes('png') ? 'png' : 'jpg';
+  const key = `profiles/${merchantId}.${ext}`;
+  await putObject(env.SUPABASE_BUCKET_KYC, key, buffer, mime);
+
+  await db
+    .update(merchantProfiles)
+    .set({ profilePhotoKey: key, updatedAt: new Date() })
+    .where(eq(merchantProfiles.userId, merchantId));
+
+  const photoUrl = await getSignedUrl(env.SUPABASE_BUCKET_KYC, key);
+  return ok(c, { success: true, photoUrl });
 });
 
 /**
